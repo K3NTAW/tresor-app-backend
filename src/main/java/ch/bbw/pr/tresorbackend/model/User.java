@@ -36,4 +36,10 @@ public class User {
 
    @Column(nullable = true) // Initially nullable for existing users, will be set for new users
    private String salt;
+
+   @Column(name = "reset_password_token")
+   private String resetPasswordToken;
+
+   @Column(name = "reset_password_token_expiry")
+   private Long resetPasswordTokenExpiry;
 }

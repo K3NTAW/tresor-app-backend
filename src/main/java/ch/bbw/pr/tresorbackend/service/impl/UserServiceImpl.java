@@ -40,8 +40,12 @@ public class UserServiceImpl implements UserService {
 
    @Override
    public User findByEmail(String email) {
-      Optional<User> optionalUser = userRepository.findByEmail(email);
-      return optionalUser.get();
+      return userRepository.findByEmail(email).orElse(null);
+   }
+
+   @Override
+   public User findByResetPasswordToken(String token) {
+      return userRepository.findByResetPasswordToken(token);
    }
 
    @Override

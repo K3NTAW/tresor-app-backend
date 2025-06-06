@@ -4,19 +4,22 @@ import ch.bbw.pr.tresorbackend.model.Secret;
 import ch.bbw.pr.tresorbackend.model.NewSecret;
 import ch.bbw.pr.tresorbackend.model.EncryptCredentials;
 import ch.bbw.pr.tresorbackend.model.User;
+import ch.bbw.pr.tresorbackend.model.SecretDTO;
 import ch.bbw.pr.tresorbackend.service.SecretService;
 import ch.bbw.pr.tresorbackend.service.UserService;
 import ch.bbw.pr.tresorbackend.util.EncryptUtil;
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import com.google.gson.Gson;
 import com.google.gson.JsonArray;
 import com.google.gson.JsonObject;
 import jakarta.validation.Valid;
-import lombok.AllArgsConstructor;
 import org.jasypt.exceptions.EncryptionOperationNotPossibleException;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.validation.BindingResult;
 import org.springframework.web.bind.annotation.*;
+import org.springframework.beans.factory.annotation.Value;
 
 import java.util.List;
 import java.util.stream.Collectors;
@@ -27,12 +30,18 @@ import java.util.stream.Collectors;
  * @author Peter Rutschmann
  */
 @RestController
-@AllArgsConstructor
 @RequestMapping("api/secrets")
 public class SecretController {
 
    private SecretService secretService;
    private UserService userService;
+   private String secretPepper;
+
+   public SecretController(SecretService secretService, UserService userService, @Value("${app.security.secret-pepper}") String secretPepper) {
+      this.secretService = secretService;
+      this.userService = userService;
+      this.secretPepper = secretPepper;
+   }
 
    // create secret REST API
    @CrossOrigin(origins = "${CROSS_ORIGIN}")
@@ -69,7 +78,7 @@ public class SecretController {
       Secret secret = new Secret(
             null,
             user.getId(),
-            new EncryptUtil(newSecret.getEncryptPassword(), user.getSalt()).encrypt(newSecret.getContent().toString()));
+            new EncryptUtil(newSecret.getEncryptPassword(), user.getSalt(), secretPepper).encrypt(newSecret.getContent().toString()));
       // save secret in db
       secretService.createSecret(secret);
       System.out.println("SecretController.createSecret, secret saved in db");
@@ -83,7 +92,7 @@ public class SecretController {
    // Build Get Secrets by userId REST API
    @CrossOrigin(origins = "${CROSS_ORIGIN}")
    @PostMapping("/byuserid")
-   public ResponseEntity<List<Secret>> getSecretsByUserId(@RequestBody EncryptCredentials credentials) {
+   public ResponseEntity<List<SecretDTO>> getSecretsByUserId(@RequestBody EncryptCredentials credentials) {
       System.out.println("SecretController.getSecretsByUserId " + credentials);
 
       List<Secret> secrets = secretService.getSecretsByUserId(credentials.getUserId());
@@ -92,7 +101,10 @@ public class SecretController {
          return ResponseEntity.notFound().build();
       }
       // Decrypt content
+      ObjectMapper objectMapper = new ObjectMapper();
+      List<SecretDTO> secretDTOs = new java.util.ArrayList<>();
       for (Secret secret : secrets) {
+         String decryptedContent;
          try {
             // Need to get the user associated with these secrets to get their salt
             // Assuming credentials.getUserId() gives the correct user id for ALL these
@@ -101,25 +113,33 @@ public class SecretController {
             if (secretOwner == null || secretOwner.getSalt() == null) {
                System.out.println("SecretController.getSecretsByUserId, owner or salt not found for user ID: "
                      + credentials.getUserId());
-               secret.setContent("Error: Owner or salt not found for decryption.");
-               continue;
+               decryptedContent = "{\"error\":\"Owner or salt not found for decryption.\"}";
+            } else {
+               decryptedContent = new EncryptUtil(credentials.getEncryptPassword(), secretOwner.getSalt(), secretPepper)
+                  .decrypt(secret.getContent());
             }
-            secret.setContent(new EncryptUtil(credentials.getEncryptPassword(), secretOwner.getSalt())
-                  .decrypt(secret.getContent()));
          } catch (EncryptionOperationNotPossibleException e) {
             System.out.println("SecretController.getSecretsByUserId " + e + " " + secret);
-            secret.setContent("not encryptable. Wrong password?");
+            decryptedContent = "{\"error\":\"not encryptable. Wrong password?\"}";
+         }
+         
+         try {
+            JsonNode contentNode = objectMapper.readTree(decryptedContent);
+            secretDTOs.add(new SecretDTO(secret.getId(), secret.getUserId(), contentNode));
+         } catch (Exception e) {
+             System.out.println("Error parsing decrypted content to JSON: " + e.getMessage());
+             // Handle error, maybe add a DTO with an error field
          }
       }
 
-      System.out.println("SecretController.getSecretsByUserId " + secrets);
-      return ResponseEntity.ok(secrets);
+      System.out.println("SecretController.getSecretsByUserId " + secretDTOs);
+      return ResponseEntity.ok(secretDTOs);
    }
 
    // Build Get Secrets by email REST API
    @CrossOrigin(origins = "${CROSS_ORIGIN}")
    @PostMapping("/byemail")
-   public ResponseEntity<List<Secret>> getSecretsByEmail(@RequestBody EncryptCredentials credentials) {
+   public ResponseEntity<List<SecretDTO>> getSecretsByEmail(@RequestBody EncryptCredentials credentials) {
       System.out.println("Yay in the controller");
       System.out.println("SecretController.getSecretsByEmail " + credentials);
 
@@ -135,20 +155,31 @@ public class SecretController {
          System.out.println("SecretController.getSecretsByEmail secret isEmpty");
          return ResponseEntity.notFound().build();
       }
+      
+      ObjectMapper objectMapper = new ObjectMapper();
+      List<SecretDTO> secretDTOs = new java.util.ArrayList<>();
       // Decrypt content
       for (Secret secret : secrets) {
+         String decryptedContent;
          try {
             // User's salt is already available from the 'user' object fetched above
-            secret.setContent(
-                  new EncryptUtil(credentials.getEncryptPassword(), user.getSalt()).decrypt(secret.getContent()));
+            decryptedContent = new EncryptUtil(credentials.getEncryptPassword(), user.getSalt(), secretPepper).decrypt(secret.getContent());
          } catch (EncryptionOperationNotPossibleException e) {
             System.out.println("SecretController.getSecretsByEmail " + e + " " + secret);
-            secret.setContent("not encryptable. Wrong password?");
+            decryptedContent = "{\"error\":\"not encryptable. Wrong password?\"}";
          }
+
+          try {
+              JsonNode contentNode = objectMapper.readTree(decryptedContent);
+              secretDTOs.add(new SecretDTO(secret.getId(), secret.getUserId(), contentNode));
+          } catch (Exception e) {
+              System.out.println("Error parsing decrypted content to JSON: " + e.getMessage());
+              // Optionally handle error, e.g., by creating a DTO with an error message
+          }
       }
 
-      System.out.println("SecretController.getSecretsByEmail " + secrets);
-      return ResponseEntity.ok(secrets);
+      System.out.println("SecretController.getSecretsByEmail " + secretDTOs);
+      return ResponseEntity.ok(secretDTOs);
    }
 
    // Build Get All Secrets REST API
@@ -215,7 +246,7 @@ public class SecretController {
       // check if Secret can be decrypted with password
       try {
          // Use user's salt for decryption check
-         new EncryptUtil(newSecret.getEncryptPassword(), user.getSalt()).decrypt(dbSecrete.getContent());
+         new EncryptUtil(newSecret.getEncryptPassword(), user.getSalt(), secretPepper).decrypt(dbSecrete.getContent());
       } catch (EncryptionOperationNotPossibleException e) {
          System.out.println("SecretController.updateSecret, invalid password");
          JsonObject obj = new JsonObject();
@@ -229,7 +260,7 @@ public class SecretController {
             secretId,
             user.getId(),
             // Use user's salt for encryption
-            new EncryptUtil(newSecret.getEncryptPassword(), user.getSalt()).encrypt(newSecret.getContent().toString()));
+            new EncryptUtil(newSecret.getEncryptPassword(), user.getSalt(), secretPepper).encrypt(newSecret.getContent().toString()));
       Secret updatedSecret = secretService.updateSecret(secret);
       // save secret in db
       secretService.createSecret(secret);

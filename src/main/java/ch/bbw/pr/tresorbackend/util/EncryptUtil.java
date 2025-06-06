@@ -23,11 +23,12 @@ public class EncryptUtil {
    private static final int ITERATION_COUNT = 65536;
    private static final int KEY_LENGTH = 256;
 
-   public EncryptUtil(String secretPassword, String saltString) {
+   public EncryptUtil(String secretPassword, String saltString, String pepper) {
       try {
          byte[] salt = Base64.getDecoder().decode(saltString);
+         String passwordWithPepper = secretPassword + pepper;
          SecretKeyFactory factory = SecretKeyFactory.getInstance("PBKDF2WithHmacSHA256");
-         KeySpec spec = new PBEKeySpec(secretPassword.toCharArray(), salt, ITERATION_COUNT, KEY_LENGTH);
+         KeySpec spec = new PBEKeySpec(passwordWithPepper.toCharArray(), salt, ITERATION_COUNT, KEY_LENGTH);
          SecretKeySpec generatedSecretKey = new SecretKeySpec(factory.generateSecret(spec).getEncoded(), "AES");
          this.secretKeySpec = generatedSecretKey;
       } catch (Exception e) {

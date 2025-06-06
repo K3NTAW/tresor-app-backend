@@ -7,6 +7,7 @@ import ch.bbw.pr.tresorbackend.model.RegisterUser;
 import ch.bbw.pr.tresorbackend.model.User;
 import ch.bbw.pr.tresorbackend.service.PasswordEncryptionService;
 import ch.bbw.pr.tresorbackend.service.UserService;
+import ch.bbw.pr.tresorbackend.service.EmailService;
 
 import com.google.gson.Gson;
 import com.google.gson.JsonArray;
@@ -38,19 +39,21 @@ public class UserController {
 
    private UserService userService;
    private PasswordEncryptionService passwordService;
+   private EmailService emailService;
    private static final Logger logger = LoggerFactory.getLogger(UserController.class);
    @Value("${recaptcha.secret}")
    private String recaptchaSecret;
 
    @Autowired
    public UserController(ConfigProperties configProperties, UserService userService,
-         PasswordEncryptionService passwordService) {
+         PasswordEncryptionService passwordService, EmailService emailService) {
       System.out.println("UserController.UserController: cross origin: " + configProperties.getOrigin());
       // Logging in the constructor
       logger.info("UserController initialized: " + configProperties.getOrigin());
       logger.debug("UserController.UserController: Cross Origin Config: {}", configProperties.getOrigin());
       this.userService = userService;
       this.passwordService = passwordService;
+      this.emailService = emailService;
    }
 
    // build create User REST API
@@ -244,6 +247,38 @@ public class UserController {
       String json = new Gson().toJson(obj);
       System.out.println("UserController.getUserIdByEmail " + json);
       return ResponseEntity.accepted().body(json);
+   }
+
+   @PostMapping("/forgot-password")
+   public ResponseEntity<String> forgotPassword(@RequestBody EmailAdress email) {
+      User user = userService.findByEmail(email.getEmail());
+      if (user == null) {
+         return ResponseEntity.badRequest().body("{\"message\":\"User not found\"}");
+      }
+
+      String token = java.util.UUID.randomUUID().toString();
+      user.setResetPasswordToken(token);
+      user.setResetPasswordTokenExpiry(System.currentTimeMillis() + 3600000); // 1 hour expiry
+      userService.updateUser(user);
+
+      emailService.sendPasswordResetEmail(user.getEmail(), token);
+
+      return ResponseEntity.ok("{\"message\":\"Password reset email sent\"}");
+   }
+
+   @PostMapping("/reset-password")
+   public ResponseEntity<String> resetPassword(@RequestParam("token") String token, @RequestBody LoginUser loginUser) {
+      User user = userService.findByResetPasswordToken(token);
+      if (user == null || user.getResetPasswordTokenExpiry() < System.currentTimeMillis()) {
+         return ResponseEntity.badRequest().body("{\"message\":\"Invalid or expired token\"}");
+      }
+
+      user.setPassword(passwordService.hashPassword(loginUser.getPassword()));
+      user.setResetPasswordToken(null);
+      user.setResetPasswordTokenExpiry(null);
+      userService.updateUser(user);
+
+      return ResponseEntity.ok("{\"message\":\"Password has been reset\"}");
    }
 
    private boolean verifyRecaptcha(String recaptchaToken) {
