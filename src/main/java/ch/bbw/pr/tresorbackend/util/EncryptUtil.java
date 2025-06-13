@@ -10,6 +10,9 @@ import java.security.SecureRandom;
 import java.security.spec.KeySpec;
 import java.util.Base64;
 
+import javax.crypto.BadPaddingException;
+import javax.crypto.IllegalBlockSizeException;
+
 /**
  * EncryptUtil
  * Used to encrypt content.
@@ -72,7 +75,11 @@ public class EncryptUtil {
 
          byte[] original = cipher.doFinal(encrypted);
          return new String(original, StandardCharsets.UTF_8);
-      } catch (Exception e) {
+      } catch (BadPaddingException | IllegalBlockSizeException e) {
+         System.out.println("Decrypt failed, probably wrong password: " + e.getMessage());
+         return "{\"error\":\"not encryptable. Wrong password?\"}";
+      } 
+      catch (Exception e) {
          throw new RuntimeException("Error while decrypting", e);
       }
    }

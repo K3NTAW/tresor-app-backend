@@ -5,6 +5,7 @@ import lombok.AllArgsConstructor;
 import lombok.Getter;
 import lombok.NoArgsConstructor;
 import lombok.Setter;
+import java.util.Date;
 
 /**
  * User
@@ -41,5 +42,6 @@ public class User {
    private String resetPasswordToken;
 
    @Column(name = "reset_password_token_expiry")
-   private Long resetPasswordTokenExpiry;
+   @Temporal(TemporalType.TIMESTAMP)
+   private Date resetPasswordTokenExpiry;
 }

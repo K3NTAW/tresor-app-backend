@@ -4,6 +4,7 @@ import ch.bbw.pr.tresorbackend.model.ConfigProperties;
 import ch.bbw.pr.tresorbackend.model.EmailAdress;
 import ch.bbw.pr.tresorbackend.model.LoginUser;
 import ch.bbw.pr.tresorbackend.model.RegisterUser;
+import ch.bbw.pr.tresorbackend.model.ResetPasswordRequest;
 import ch.bbw.pr.tresorbackend.model.User;
 import ch.bbw.pr.tresorbackend.service.PasswordEncryptionService;
 import ch.bbw.pr.tresorbackend.service.UserService;
@@ -24,7 +25,9 @@ import org.springframework.validation.BindingResult;
 import org.springframework.web.bind.annotation.*;
 import org.springframework.web.client.RestTemplate;
 
+import java.util.Date;
 import java.util.List;
+import java.util.UUID;
 import java.util.stream.Collectors;
 
 /**
@@ -95,7 +98,12 @@ public class UserController {
       System.out.println("UserController.createUser: input validation passed");
 
       // password validation
-      // todo ergänzen
+      if (!registerUser.getPassword().equals(registerUser.getPasswordConfirmation())) {
+         JsonObject obj = new JsonObject();
+         obj.addProperty("message", "Password and password confirmation do not match.");
+         String json = new Gson().toJson(obj);
+         return ResponseEntity.badRequest().body(json);
+      }
       System.out.println("UserController.createUser, password validation passed");
 
       // transform registerUser to user
@@ -256,9 +264,9 @@ public class UserController {
          return ResponseEntity.badRequest().body("{\"message\":\"User not found\"}");
       }
 
-      String token = java.util.UUID.randomUUID().toString();
+      String token = UUID.randomUUID().toString();
       user.setResetPasswordToken(token);
-      user.setResetPasswordTokenExpiry(System.currentTimeMillis() + 3600000); // 1 hour expiry
+      user.setResetPasswordTokenExpiry(new Date(System.currentTimeMillis() + 3600000)); // 1 hour expiry
       userService.updateUser(user);
 
       emailService.sendPasswordResetEmail(user.getEmail(), token);
@@ -267,18 +275,22 @@ public class UserController {
    }
 
    @PostMapping("/reset-password")
-   public ResponseEntity<String> resetPassword(@RequestParam("token") String token, @RequestBody LoginUser loginUser) {
+   public ResponseEntity<String> resetPassword(@RequestParam("token") String token, @RequestBody ResetPasswordRequest request) {
       User user = userService.findByResetPasswordToken(token);
-      if (user == null || user.getResetPasswordTokenExpiry() < System.currentTimeMillis()) {
-         return ResponseEntity.badRequest().body("{\"message\":\"Invalid or expired token\"}");
+      if (user == null || user.getResetPasswordTokenExpiry() == null || user.getResetPasswordTokenExpiry().before(new Date())) {
+         JsonObject obj = new JsonObject();
+         obj.addProperty("message", "Invalid or expired token.");
+         return ResponseEntity.badRequest().body(new Gson().toJson(obj));
       }
 
-      user.setPassword(passwordService.hashPassword(loginUser.getPassword()));
+      user.setPassword(passwordService.hashPassword(request.getNewPassword()));
       user.setResetPasswordToken(null);
       user.setResetPasswordTokenExpiry(null);
       userService.updateUser(user);
 
-      return ResponseEntity.ok("{\"message\":\"Password has been reset\"}");
+      JsonObject obj = new JsonObject();
+      obj.addProperty("message", "Password has been reset successfully.");
+      return ResponseEntity.ok(new Gson().toJson(obj));
    }
 
    private boolean verifyRecaptcha(String recaptchaToken) {
