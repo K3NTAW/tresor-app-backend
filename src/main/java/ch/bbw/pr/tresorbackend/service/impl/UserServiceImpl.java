@@ -1,73 +1,102 @@
 package ch.bbw.pr.tresorbackend.service.impl;
 
+import ch.bbw.pr.tresorbackend.model.RegisterUser;
+import ch.bbw.pr.tresorbackend.model.Role;
 import ch.bbw.pr.tresorbackend.model.User;
 import ch.bbw.pr.tresorbackend.repository.UserRepository;
+import ch.bbw.pr.tresorbackend.service.RecaptchaService;
 import ch.bbw.pr.tresorbackend.service.UserService;
-
-import lombok.AllArgsConstructor;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
-import java.util.List;
-import java.util.Optional;
+
 import java.security.SecureRandom;
 import java.util.Base64;
+import java.util.List;
 
-/**
- * UserServiceImpl
- * 
- * @author Peter Rutschmann
- */
 @Service
-@AllArgsConstructor
 public class UserServiceImpl implements UserService {
 
-   private UserRepository userRepository;
+    @Autowired
+    private UserRepository userRepository;
 
-   @Override
-   public User createUser(User user) {
-      // Generate a salt for the new user
-      SecureRandom random = new SecureRandom();
-      byte[] saltBytes = new byte[16]; // 16 bytes = 128 bits, a common salt length
-      random.nextBytes(saltBytes);
-      user.setSalt(Base64.getEncoder().encodeToString(saltBytes));
-      return userRepository.save(user);
-   }
+    @Autowired
+    private PasswordEncoder passwordEncoder;
 
-   @Override
-   public User getUserById(Long userId) {
-      Optional<User> optionalUser = userRepository.findById(userId);
-      return optionalUser.get();
-   }
+    @Autowired
+    private RecaptchaService recaptchaService;
 
-   @Override
-   public User findByEmail(String email) {
-      return userRepository.findByEmail(email).orElse(null);
-   }
+    @Override
+    public User registerUser(RegisterUser registerUser) {
+        if (!recaptchaService.verifyRecaptcha(registerUser.getRecaptchaToken())) {
+            throw new IllegalStateException("reCAPTCHA verification failed");
+        }
+        if (userRepository.findByEmail(registerUser.getEmail()).isPresent()) {
+            throw new IllegalStateException("Email already in use");
+        }
 
-   @Override
-   public User findByResetPasswordToken(String token) {
-      return userRepository.findByResetPasswordToken(token);
-   }
+        if (!registerUser.getPassword().equals(registerUser.getPasswordConfirmation())) {
+            throw new IllegalStateException("Passwords do not match");
+        }
 
-   @Override
-   public List<User> getAllUsers() {
-      return (List<User>) userRepository.findAll();
-   }
+        User newUser = new User();
+        newUser.setFirstName(registerUser.getFirstName());
+        newUser.setLastName(registerUser.getLastName());
+        newUser.setEmail(registerUser.getEmail());
+        newUser.setPassword(passwordEncoder.encode(registerUser.getPassword()));
+        
+        // Generate a salt
+        SecureRandom random = new SecureRandom();
+        byte[] salt = new byte[16];
+        random.nextBytes(salt);
+        newUser.setSalt(Base64.getEncoder().encodeToString(salt));
+        
+        newUser.getRoles().add(Role.USER);
 
-   @Override
-   public User updateUser(User user) {
-      User existingUser = userRepository.findById(user.getId()).get();
-      existingUser.setFirstName(user.getFirstName());
-      existingUser.setLastName(user.getLastName());
-      existingUser.setEmail(user.getEmail());
-      existingUser.setPassword(user.getPassword());
-      existingUser.setResetPasswordToken(user.getResetPasswordToken());
-      existingUser.setResetPasswordTokenExpiry(user.getResetPasswordTokenExpiry());
-      User updatedUser = userRepository.save(existingUser);
-      return updatedUser;
-   }
+        return userRepository.save(newUser);
+    }
+    
+    @Override
+    public User createUser(User user) {
+        user.setPassword(passwordEncoder.encode(user.getPassword()));
+        
+        // Generate a salt
+        SecureRandom random = new SecureRandom();
+        byte[] salt = new byte[16];
+        random.nextBytes(salt);
+        user.setSalt(Base64.getEncoder().encodeToString(salt));
+        
+        user.getRoles().add(Role.USER);
+        return userRepository.save(user);
+    }
 
-   @Override
-   public void deleteUser(Long userId) {
-      userRepository.deleteById(userId);
-   }
-}
+    @Override
+    public User getUserById(Long userId) {
+        return userRepository.findById(userId).orElse(null);
+    }
+
+    @Override
+    public User findByEmail(String email) {
+        return userRepository.findByEmail(email).orElse(null);
+    }
+
+    @Override
+    public List<User> getAllUsers() {
+        return userRepository.findAll();
+    }
+
+    @Override
+    public User updateUser(User user) {
+        return userRepository.save(user);
+    }
+
+    @Override
+    public void deleteUser(Long userId) {
+        userRepository.deleteById(userId);
+    }
+
+    @Override
+    public User findByResetPasswordToken(String token) {
+        return userRepository.findByResetPasswordToken(token);
+    }
+} 

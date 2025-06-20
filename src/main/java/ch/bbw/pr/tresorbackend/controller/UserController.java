@@ -6,9 +6,8 @@ import ch.bbw.pr.tresorbackend.model.LoginUser;
 import ch.bbw.pr.tresorbackend.model.RegisterUser;
 import ch.bbw.pr.tresorbackend.model.ResetPasswordRequest;
 import ch.bbw.pr.tresorbackend.model.User;
-import ch.bbw.pr.tresorbackend.service.PasswordEncryptionService;
-import ch.bbw.pr.tresorbackend.service.UserService;
 import ch.bbw.pr.tresorbackend.service.EmailService;
+import ch.bbw.pr.tresorbackend.service.UserService;
 
 import com.google.gson.Gson;
 import com.google.gson.JsonArray;
@@ -21,6 +20,7 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
+import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.validation.BindingResult;
 import org.springframework.web.bind.annotation.*;
 import org.springframework.web.client.RestTemplate;
@@ -41,144 +41,19 @@ import java.util.stream.Collectors;
 public class UserController {
 
    private UserService userService;
-   private PasswordEncryptionService passwordService;
    private EmailService emailService;
    private static final Logger logger = LoggerFactory.getLogger(UserController.class);
    @Value("${recaptcha.secret}")
    private String recaptchaSecret;
 
    @Autowired
-   public UserController(ConfigProperties configProperties, UserService userService,
-         PasswordEncryptionService passwordService, EmailService emailService) {
+   public UserController(ConfigProperties configProperties, UserService userService, EmailService emailService) {
       System.out.println("UserController.UserController: cross origin: " + configProperties.getOrigin());
       // Logging in the constructor
       logger.info("UserController initialized: " + configProperties.getOrigin());
       logger.debug("UserController.UserController: Cross Origin Config: {}", configProperties.getOrigin());
       this.userService = userService;
-      this.passwordService = passwordService;
       this.emailService = emailService;
-   }
-
-   // build create User REST API
-   @PostMapping
-   public ResponseEntity<String> createUser(@Valid @RequestBody RegisterUser registerUser,
-         BindingResult bindingResult) {
-      // captcha
-      if (registerUser.getRecaptchaToken() == null || registerUser.getRecaptchaToken().isEmpty()) {
-         JsonObject obj = new JsonObject();
-         obj.addProperty("message", "reCAPTCHA token is missing.");
-         String json = new Gson().toJson(obj);
-         return ResponseEntity.badRequest().body(json);
-      }
-      boolean captchaVerified = verifyRecaptcha(registerUser.getRecaptchaToken());
-      if (!captchaVerified) {
-         JsonObject obj = new JsonObject();
-         obj.addProperty("message", "reCAPTCHA verification failed.");
-         String json = new Gson().toJson(obj);
-         return ResponseEntity.badRequest().body(json);
-      }
-      System.out.println("UserController.createUser: captcha passed.");
-
-      // input validation
-      if (bindingResult.hasErrors()) {
-         List<String> errors = bindingResult.getFieldErrors().stream()
-               .map(fieldError -> fieldError.getField() + ": " + fieldError.getDefaultMessage())
-               .collect(Collectors.toList());
-         System.out.println("UserController.createUser " + errors);
-
-         JsonArray arr = new JsonArray();
-         errors.forEach(arr::add);
-         JsonObject obj = new JsonObject();
-         obj.add("message", arr);
-         String json = new Gson().toJson(obj);
-
-         System.out.println("UserController.createUser, validation fails: " + json);
-         return ResponseEntity.badRequest().body(json);
-      }
-      System.out.println("UserController.createUser: input validation passed");
-
-      // password validation
-      if (!registerUser.getPassword().equals(registerUser.getPasswordConfirmation())) {
-         JsonObject obj = new JsonObject();
-         obj.addProperty("message", "Password and password confirmation do not match.");
-         String json = new Gson().toJson(obj);
-         return ResponseEntity.badRequest().body(json);
-      }
-      System.out.println("UserController.createUser, password validation passed");
-
-      // transform registerUser to user
-      User user = new User(); // Use no-args constructor
-      user.setFirstName(registerUser.getFirstName());
-      user.setLastName(registerUser.getLastName());
-      user.setEmail(registerUser.getEmail());
-      user.setPassword(passwordService.hashPassword(registerUser.getPassword()));
-      // The salt will be set by UserServiceImpl.createUser()
-
-      User savedUser = userService.createUser(user);
-      System.out.println("UserController.createUser, user saved in db");
-      JsonObject obj = new JsonObject();
-      obj.addProperty("answer", "User Saved");
-      String json = new Gson().toJson(obj);
-      System.out.println("UserController.createUser " + json);
-      return ResponseEntity.accepted().body(json);
-   }
-
-   // User login endpoint
-   @PostMapping("/login")
-   public ResponseEntity<String> doLoginUser(@RequestBody LoginUser loginUser, BindingResult bindingResult) {
-      logger.info("UserController.doLoginUser: Attempting login for email: {}", loginUser.getEmail());
-
-      // Input validation
-      if (bindingResult.hasErrors()) {
-         List<String> errors = bindingResult.getFieldErrors().stream()
-               .map(fieldError -> fieldError.getField() + ": " + fieldError.getDefaultMessage())
-               .collect(Collectors.toList());
-
-         JsonArray arr = new JsonArray();
-         errors.forEach(arr::add);
-         JsonObject obj = new JsonObject();
-         obj.add("message", arr);
-         String json = new Gson().toJson(obj);
-
-         logger.error("UserController.doLoginUser: Validation failed: {}", json);
-         return ResponseEntity.badRequest().body(json);
-      }
-
-      // Find user by email
-      User user = userService.findByEmail(loginUser.getEmail());
-      if (user == null) {
-         logger.warn("UserController.doLoginUser: No user found with email: {}", loginUser.getEmail());
-
-         JsonObject obj = new JsonObject();
-         obj.addProperty("message", "Invalid email or password");
-         String json = new Gson().toJson(obj);
-
-         return ResponseEntity.status(HttpStatus.UNAUTHORIZED).body(json);
-      }
-
-      // Verify password
-      boolean passwordMatches = passwordService.verifyPassword(loginUser.getPassword(), user.getPassword());
-      if (!passwordMatches) {
-         logger.warn("UserController.doLoginUser: Password mismatch for user: {}", user.getEmail());
-
-         JsonObject obj = new JsonObject();
-         obj.addProperty("message", "Invalid email or password");
-         String json = new Gson().toJson(obj);
-
-         return ResponseEntity.status(HttpStatus.UNAUTHORIZED).body(json);
-      }
-
-      // Login successful
-      logger.info("UserController.doLoginUser: Login successful for user ID: {}", user.getId());
-
-      JsonObject obj = new JsonObject();
-      obj.addProperty("userId", user.getId());
-      obj.addProperty("firstName", user.getFirstName());
-      obj.addProperty("lastName", user.getLastName());
-      obj.addProperty("email", user.getEmail());
-      String json = new Gson().toJson(obj);
-
-      return ResponseEntity.ok().body(json);
    }
 
    // build get user by id REST API
@@ -192,6 +67,7 @@ public class UserController {
    // Build Get All Users REST API
    // http://localhost:8080/api/users
    @GetMapping
+   @PreAuthorize("hasRole('ADMIN')")
    public ResponseEntity<List<User>> getAllUsers() {
       logger.info("In GetMapping");
       List<User> users = userService.getAllUsers();
@@ -249,61 +125,11 @@ public class UserController {
          System.out.println("UserController.getUserIdByEmail, fails: " + json);
          return ResponseEntity.badRequest().body(json);
       }
-      System.out.println("UserController.getUserIdByEmail, user find by email");
+      System.out.println("UserController.getUserIdByEmail, user found in db: " + user.getId());
+
       JsonObject obj = new JsonObject();
-      obj.addProperty("answer", user.getId());
+      obj.addProperty("userId", user.getId());
       String json = new Gson().toJson(obj);
-      System.out.println("UserController.getUserIdByEmail " + json);
-      return ResponseEntity.accepted().body(json);
-   }
-
-   @PostMapping("/forgot-password")
-   public ResponseEntity<String> forgotPassword(@RequestBody EmailAdress email) {
-      User user = userService.findByEmail(email.getEmail());
-      if (user == null) {
-         return ResponseEntity.badRequest().body("{\"message\":\"User not found\"}");
-      }
-
-      String token = UUID.randomUUID().toString();
-      user.setResetPasswordToken(token);
-      user.setResetPasswordTokenExpiry(new Date(System.currentTimeMillis() + 3600000)); // 1 hour expiry
-      userService.updateUser(user);
-
-      emailService.sendPasswordResetEmail(user.getEmail(), token);
-
-      return ResponseEntity.ok("{\"message\":\"Password reset email sent\"}");
-   }
-
-   @PostMapping("/reset-password")
-   public ResponseEntity<String> resetPassword(@RequestParam("token") String token, @RequestBody ResetPasswordRequest request) {
-      User user = userService.findByResetPasswordToken(token);
-      if (user == null || user.getResetPasswordTokenExpiry() == null || user.getResetPasswordTokenExpiry().before(new Date())) {
-         JsonObject obj = new JsonObject();
-         obj.addProperty("message", "Invalid or expired token.");
-         return ResponseEntity.badRequest().body(new Gson().toJson(obj));
-      }
-
-      user.setPassword(passwordService.hashPassword(request.getNewPassword()));
-      user.setResetPasswordToken(null);
-      user.setResetPasswordTokenExpiry(null);
-      userService.updateUser(user);
-
-      JsonObject obj = new JsonObject();
-      obj.addProperty("message", "Password has been reset successfully.");
-      return ResponseEntity.ok(new Gson().toJson(obj));
-   }
-
-   private boolean verifyRecaptcha(String recaptchaToken) {
-      String url = "https://www.google.com/recaptcha/api/siteverify"
-            + "?secret=" + recaptchaSecret
-            + "&response=" + recaptchaToken;
-      RestTemplate restTemplate = new RestTemplate();
-      try {
-         String response = restTemplate.postForObject(url, null, String.class);
-         return response != null && response.contains("\"success\": true");
-      } catch (Exception e) {
-         logger.error("reCAPTCHA verification error", e);
-         return false;
-      }
+      return ResponseEntity.ok().body(json);
    }
 }
